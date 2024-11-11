@@ -1,6 +1,10 @@
-[package]
-name = "tiny-desk"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["./crates/tunnel", "."]
 
-[dependencies]
+
+[workspace.dependencies]
+bytes = "1.0"
+futures = "0.3"
+thiserror = "1.0"
+async-trait = "0.1"
+url = "2.5"
