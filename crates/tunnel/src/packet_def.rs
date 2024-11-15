@@ -32,6 +32,7 @@ pub struct UDPTunnelHeader {
     pub padding: u8,
     pub len: U16<DefaultEndian>,
 }
+
 pub const UDP_TUNNEL_HEADER_SIZE: usize = std::mem::size_of::<UDPTunnelHeader>();
 
 #[repr(C, packed)]
@@ -79,6 +80,7 @@ pub struct PeerManagerHeader {
     reserved: u8,
     pub len: U32<DefaultEndian>,
 }
+
 pub const PEER_MANAGER_HEADER_SIZE: usize = std::mem::size_of::<PeerManagerHeader>();
 
 impl PeerManagerHeader {
@@ -320,6 +322,15 @@ impl ZCPacketType {
     }
 }
 
+///
+///get_packet_offsets 显示了bytes中的字段布局
+/// wg_tunnel_header_offset 0
+/// udp_tunnel_header_offset 12
+/// tcp_tunnel_header_offset 16
+/// dummy_tunnel_header_offset 20
+/// peer_manager_header_offset 20
+/// payload_offset 36
+///
 #[derive(Debug, Clone)]
 pub struct ZCPacket {
     inner: BytesMut,
@@ -384,7 +395,7 @@ impl ZCPacket {
         ret.mut_payload()[foreign_network_hdr.get_header_len()..]
             .copy_from_slice(foreign_zc_packet.tunnel_payload());
 
-        let hdr = ret.get_mut_header::<PeerManagerHeader>().unwrap();
+        let hdr = ret.mut_peer_manager_header().unwrap();
         hdr.from_peer_id = 0.into();
         hdr.to_peer_id = 0.into();
         hdr.packet_type = PacketType::ForeignNetworkPacket as u8;
@@ -406,14 +417,48 @@ impl ZCPacket {
         &mut self.inner[offset..]
     }
 
-    pub fn get_mut_header<Header: IntoBytes + FromBytes + KnownLayout>(
-        &mut self,
-    ) -> Result<&mut Header, Error> {
-        let (header, _) = Header::mut_from_prefix(
+    pub fn mut_peer_manager_header(&mut self) -> Result<&mut PeerManagerHeader, Error> {
+        let (header, _) = PeerManagerHeader::mut_from_prefix(
             &mut self.inner[self
                 .packet_type
                 .get_packet_offsets()
                 .peer_manager_header_offset..],
+        )
+        .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
+
+        Ok(header)
+    }
+
+    pub fn mut_tcp_tunnel_header(&mut self) -> Result<&mut TCPTunnelHeader, Error> {
+        let (header, _) = TCPTunnelHeader::mut_from_prefix(
+            &mut self.inner[self
+                .packet_type
+                .get_packet_offsets()
+                .tcp_tunnel_header_offset..],
+        )
+        .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
+
+        Ok(header)
+    }
+
+    pub fn mut_udp_tunnel_header(&mut self) -> Result<&mut UDPTunnelHeader, Error> {
+        let (header, _) = UDPTunnelHeader::mut_from_prefix(
+            &mut self.inner[self
+                .packet_type
+                .get_packet_offsets()
+                .udp_tunnel_header_offset..],
+        )
+        .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
+
+        Ok(header)
+    }
+
+    pub fn mut_wg_tunnel_header(&mut self) -> Result<&mut WGTunnelHeader, Error> {
+        let (header, _) = WGTunnelHeader::mut_from_prefix(
+            &mut self.inner[self
+                .packet_type
+                .get_packet_offsets()
+                .udp_tunnel_header_offset..],
         )
         .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
 
@@ -457,7 +502,7 @@ impl ZCPacket {
 
     pub fn fill_peer_manager_hdr(&mut self, from_peer_id: u32, to_peer_id: u32, packet_type: u8) {
         let payload_len = self.payload_len();
-        let hdr = self.get_mut_header::<PeerManagerHeader>().unwrap();
+        let hdr = self.mut_peer_manager_header().unwrap();
         hdr.from_peer_id.set(from_peer_id);
         hdr.to_peer_id.set(to_peer_id);
         hdr.packet_type = packet_type;
@@ -577,11 +622,11 @@ mod tests {
     fn test_zc_packet() {
         let payload = b"hello world";
         let mut packet = ZCPacket::new_with_payload(payload);
-        let peer_manager_header = packet.get_mut_header::<PeerManagerHeader>().unwrap();
+        let peer_manager_header = packet.mut_peer_manager_header().unwrap();
         peer_manager_header.packet_type = PacketType::Data as u8;
         peer_manager_header.len.set(payload.len() as u32);
 
-        let tcp_tunnel_header = packet.get_mut_header::<TCPTunnelHeader>().unwrap();
+        let tcp_tunnel_header = packet.mut_tcp_tunnel_header().unwrap();
         tcp_tunnel_header.len.set(payload.len() as u32);
 
         // let udp_tunnel_header = packet.mut_udp_tunnel_header().unwrap();

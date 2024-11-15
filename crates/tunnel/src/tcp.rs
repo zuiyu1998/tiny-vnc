@@ -38,7 +38,7 @@ impl ZCPacketToBytes for TcpZCPacketToBytes {
         let mut item = item.convert_type(ZCPacketType::TCP);
 
         let tcp_len = PEER_MANAGER_HEADER_SIZE + item.payload_len();
-        let header = item.get_mut_header::<TCPTunnelHeader>()?;
+        let header = item.mut_tcp_tunnel_header()?;
         header.len.set(tcp_len.try_into().unwrap());
 
         Ok(item.into_bytes())
