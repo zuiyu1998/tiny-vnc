@@ -11,6 +11,7 @@ type DefaultEndian = LittleEndian;
 pub struct TCPTunnelHeader {
     pub len: U32<DefaultEndian>,
 }
+
 pub const TCP_TUNNEL_HEADER_SIZE: usize = std::mem::size_of::<TCPTunnelHeader>();
 
 #[repr(u8)]
@@ -429,6 +430,18 @@ impl ZCPacket {
         Ok(header)
     }
 
+    pub fn peer_manager_header(&self) -> Result<&PeerManagerHeader, Error> {
+        let (header, _) = PeerManagerHeader::ref_from_prefix(
+            &self.inner[self
+                .packet_type
+                .get_packet_offsets()
+                .peer_manager_header_offset..],
+        )
+        .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
+
+        Ok(header)
+    }
+
     pub fn mut_tcp_tunnel_header(&mut self) -> Result<&mut TCPTunnelHeader, Error> {
         let (header, _) = TCPTunnelHeader::mut_from_prefix(
             &mut self.inner[self
@@ -459,20 +472,6 @@ impl ZCPacket {
                 .packet_type
                 .get_packet_offsets()
                 .udp_tunnel_header_offset..],
-        )
-        .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
-
-        Ok(header)
-    }
-
-    pub fn get_header<Header: IntoBytes + FromBytes + Immutable + KnownLayout>(
-        &self,
-    ) -> Result<&Header, Error> {
-        let (header, _) = Header::ref_from_prefix(
-            &self.inner[self
-                .packet_type
-                .get_packet_offsets()
-                .peer_manager_header_offset..],
         )
         .map_err(|cast| Error::InvalidPacket(cast.to_string()))?;
 
@@ -585,14 +584,13 @@ impl ZCPacket {
     }
 
     pub fn is_lossy(&self) -> bool {
-        self.get_header::<PeerManagerHeader>()
+        self.peer_manager_header()
             .and_then(|hdr| Ok(hdr.packet_type == PacketType::Data as u8))
             .unwrap_or(false)
     }
 
     pub fn foreign_network_hdr(&self) -> Option<&ForeignNetworkPacketHeader> {
-        if self.get_header::<PeerManagerHeader>().unwrap().packet_type
-            == PacketType::ForeignNetworkPacket as u8
+        if self.peer_manager_header().unwrap().packet_type == PacketType::ForeignNetworkPacket as u8
         {
             ForeignNetworkPacketHeader::ref_from_prefix(self.payload())
                 .ok()

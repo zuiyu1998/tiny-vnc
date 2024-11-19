@@ -16,13 +16,11 @@ use zerocopy::FromBytes;
 use crate::packet_def::TCPTunnelHeader;
 use crate::{
     buf::BufList,
-    common::TunnelWrapper,
+    common::{
+        build_url_from_socket_addr, check_scheme_and_get_socket_addr, setup_sokcet2, TunnelWrapper,
+    },
     packet_def::{PEER_MANAGER_HEADER_SIZE, TCP_TUNNEL_HEADER_SIZE},
-    SinkItem, StreamItem, ZCPacket, ZCPacketType,
-};
-
-use super::{
-    check_scheme_and_get_socket_addr, setup_sokcet2, Error, Tunnel, TunnelInfo, TunnelListener,
+    Error, SinkItem, StreamItem, Tunnel, TunnelInfo, TunnelListener, ZCPacket, ZCPacketType,
 };
 
 const TCP_MTU_BYTES: usize = 2000;
@@ -337,7 +335,7 @@ impl TunnelListener for TcpTunnelListener {
             tunnel_type: "tcp".to_owned(),
             local_addr: Some(self.local_url().into()),
             remote_addr: Some(
-                super::build_url_from_socket_addr(&stream.peer_addr()?.to_string(), "tcp").into(),
+                build_url_from_socket_addr(&stream.peer_addr()?.to_string(), "tcp").into(),
             ),
         };
 
