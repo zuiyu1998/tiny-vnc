@@ -1,13 +1,36 @@
 use crate::{Error, IpVersion, Tunnel, TunnelInfo, ZCPacketSink, ZCPacketStream};
+use futures::{stream::FuturesUnordered, StreamExt};
 use network_interface::NetworkInterfaceConfig;
 use std::{
     any::Any,
+    future::Future,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
 use url::Url;
+
+pub(crate) async fn wait_for_connect_futures<Fut, Ret, E>(
+    mut futures: FuturesUnordered<Fut>,
+) -> Result<Ret, Error>
+where
+    Fut: Future<Output = Result<Ret, E>> + Send + Sync,
+    E: std::error::Error + Into<Error> + Send + Sync + 'static,
+{
+    // return last error
+    let mut last_err = None;
+
+    while let Some(ret) = futures.next().await {
+        if let Err(e) = ret {
+            last_err = Some(e.into());
+        } else {
+            return ret.map_err(|e| e.into());
+        }
+    }
+
+    Err(last_err.unwrap_or(Error::Shutdown))
+}
 
 pub(crate) fn setup_sokcet2_ext(
     socket2_socket: &socket2::Socket,
@@ -116,6 +139,21 @@ impl FromUrl for SocketAddr {
             .copied()
             .ok_or(Error::NoDnsRecordFound(ip_version))
     }
+}
+
+pub(crate) fn check_scheme_and_get_socket_addr_ext<T>(
+    url: &url::Url,
+    scheme: &str,
+    ip_version: IpVersion,
+) -> Result<T, Error>
+where
+    T: FromUrl,
+{
+    if url.scheme() != scheme {
+        return Err(Error::InvalidProtocol(url.scheme().to_string()));
+    }
+
+    Ok(T::from_url(url.clone(), ip_version)?)
 }
 
 pub(crate) fn check_scheme_and_get_socket_addr<T>(url: &url::Url, scheme: &str) -> Result<T, Error>

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures::stream::FuturesUnordered;
 use futures::Sink;
 use futures::Stream;
 use pin_project_lite::pin_project;
@@ -9,15 +10,19 @@ use std::pin::Pin;
 use std::task::ready;
 use std::task::Poll;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 use tokio::net::{TcpListener, TcpSocket};
 use tokio_util::io::poll_write_buf;
 use zerocopy::FromBytes;
 
+use crate::common::check_scheme_and_get_socket_addr_ext;
 use crate::packet_def::TCPTunnelHeader;
+use crate::IpVersion;
 use crate::{
     buf::BufList,
     common::{
-        build_url_from_socket_addr, check_scheme_and_get_socket_addr, setup_sokcet2, TunnelWrapper,
+        build_url_from_socket_addr, check_scheme_and_get_socket_addr, setup_sokcet2,
+        wait_for_connect_futures, TunnelWrapper,
     },
     packet_def::{PEER_MANAGER_HEADER_SIZE, TCP_TUNNEL_HEADER_SIZE},
     Error, SinkItem, StreamItem, Tunnel, TunnelInfo, TunnelListener, ZCPacket, ZCPacketType,
@@ -280,6 +285,111 @@ where
                 }
             }
         }
+    }
+}
+
+fn get_tunnel_with_tcp_stream(
+    stream: TcpStream,
+    remote_url: url::Url,
+) -> Result<Box<dyn Tunnel>, Error> {
+    if let Err(e) = stream.set_nodelay(true) {
+        tracing::warn!(?e, "set_nodelay fail in get_tunnel_with_tcp_stream");
+    }
+
+    let info = TunnelInfo {
+        tunnel_type: "tcp".to_owned(),
+        local_addr: Some(
+            build_url_from_socket_addr(&stream.local_addr()?.to_string(), "tcp").into(),
+        ),
+        remote_addr: Some(remote_url.into()),
+    };
+
+    let (r, w) = stream.into_split();
+    Ok(Box::new(TunnelWrapper::new(
+        FramedReader::new(r, TCP_MTU_BYTES),
+        FramedWriter::new(w),
+        Some(info),
+    )))
+}
+
+#[derive(Debug)]
+pub struct TcpTunnelConnector {
+    addr: url::Url,
+
+    bind_addrs: Vec<SocketAddr>,
+    ip_version: IpVersion,
+}
+
+impl TcpTunnelConnector {
+    pub fn new(addr: url::Url) -> Self {
+        TcpTunnelConnector {
+            addr,
+            bind_addrs: vec![],
+            ip_version: IpVersion::Both,
+        }
+    }
+
+    async fn connect_with_default_bind(
+        &mut self,
+        addr: SocketAddr,
+    ) -> Result<Box<dyn Tunnel>, Error> {
+        tracing::info!(addr = ?self.addr, "connect tcp start");
+        let stream = TcpStream::connect(addr).await?;
+        tracing::info!(addr = ?self.addr, "connect tcp succ");
+        return get_tunnel_with_tcp_stream(stream, self.addr.clone().into());
+    }
+
+    async fn connect_with_custom_bind(
+        &mut self,
+        addr: SocketAddr,
+    ) -> Result<Box<dyn Tunnel>, Error> {
+        let futures = FuturesUnordered::new();
+
+        for bind_addr in self.bind_addrs.iter() {
+            tracing::info!(bind_addr = ?bind_addr, ?addr, "bind addr");
+
+            let socket2_socket = socket2::Socket::new(
+                socket2::Domain::for_address(addr),
+                socket2::Type::STREAM,
+                Some(socket2::Protocol::TCP),
+            )?;
+
+            if let Err(e) = setup_sokcet2(&socket2_socket, bind_addr) {
+                tracing::error!(bind_addr = ?bind_addr, ?addr, "bind addr fail: {:?}", e);
+                continue;
+            }
+
+            let socket = TcpSocket::from_std_stream(socket2_socket.into());
+            futures.push(socket.connect(addr.clone()));
+        }
+
+        let ret = wait_for_connect_futures(futures).await;
+        return get_tunnel_with_tcp_stream(ret?, self.addr.clone().into());
+    }
+}
+
+#[async_trait]
+impl super::TunnelConnector for TcpTunnelConnector {
+    async fn connect(&mut self) -> Result<Box<dyn Tunnel>, Error> {
+        let addr =
+            check_scheme_and_get_socket_addr_ext::<SocketAddr>(&self.addr, "tcp", self.ip_version)?;
+        if self.bind_addrs.is_empty() || addr.is_ipv6() {
+            self.connect_with_default_bind(addr).await
+        } else {
+            self.connect_with_custom_bind(addr).await
+        }
+    }
+
+    fn remote_url(&self) -> url::Url {
+        self.addr.clone()
+    }
+
+    fn set_bind_addrs(&mut self, addrs: Vec<SocketAddr>) {
+        self.bind_addrs = addrs;
+    }
+
+    fn set_ip_version(&mut self, ip_version: IpVersion) {
+        self.ip_version = ip_version;
     }
 }
 
