@@ -176,17 +176,16 @@ pin_project! {
         #[pin]
         reader: R,
         buf: BytesMut,
-        state: FrameReaderState,
         max_packet_size: usize,
         associate_data: Option<Box<dyn Any + Send + 'static>>,
     }
 }
 
 // usize means the size remaining to read
-enum FrameReaderState {
-    ReadingHeader(usize),
-    ReadingBody(usize),
-}
+// enum FrameReaderState {
+//     ReadingHeader(usize),
+//     ReadingBody(usize),
+// }
 
 impl<R> FramedReader<R> {
     pub fn new(reader: R, max_packet_size: usize) -> Self {
@@ -201,7 +200,7 @@ impl<R> FramedReader<R> {
         FramedReader {
             reader,
             buf: BytesMut::with_capacity(max_packet_size),
-            state: FrameReaderState::ReadingHeader(4),
+            // state: FrameReaderState::ReadingHeader(4),
             max_packet_size,
             associate_data,
         }
@@ -459,5 +458,18 @@ impl TunnelListener for TcpTunnelListener {
 
     fn local_url(&self) -> url::Url {
         self.addr.clone()
+    }
+}
+
+mod tests {
+
+    #[tokio::test]
+    async fn tcp_pingpong() {
+        use super::*;
+        use crate::common::tests::_tunnel_pingpong;
+
+        let listener = TcpTunnelListener::new("tcp://0.0.0.0:31011".parse().unwrap());
+        let connector = TcpTunnelConnector::new("tcp://127.0.0.1:31011".parse().unwrap());
+        _tunnel_pingpong(listener, connector).await
     }
 }

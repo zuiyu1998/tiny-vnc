@@ -11,6 +11,52 @@ use std::{
 
 use url::Url;
 
+pub struct NetNSGuard {}
+
+impl NetNSGuard {
+    pub fn new(_ns: Option<String>) -> Box<Self> {
+        Box::new(NetNSGuard {})
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NetNS {
+    name: Option<String>,
+}
+
+impl NetNS {
+    pub fn new(name: Option<String>) -> Self {
+        NetNS { name }
+    }
+
+    pub async fn run_async<F, Fut, Ret>(&self, f: F) -> Ret
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Ret>,
+    {
+        // TODO: do we really need this lock
+        // let _lock = LOCK.lock().await;
+        let _guard = NetNSGuard::new(self.name.clone());
+        f().await
+    }
+
+    pub fn run<F, Ret>(&self, f: F) -> Ret
+    where
+        F: FnOnce() -> Ret,
+    {
+        let _guard = NetNSGuard::new(self.name.clone());
+        f()
+    }
+
+    pub fn guard(&self) -> Box<NetNSGuard> {
+        NetNSGuard::new(self.name.clone())
+    }
+
+    pub fn name(&self) -> Option<String> {
+        self.name.clone()
+    }
+}
+
 pub(crate) async fn wait_for_connect_futures<Fut, Ret, E>(
     mut futures: FuturesUnordered<Fut>,
 ) -> Result<Ret, Error>
@@ -218,5 +264,119 @@ where
 
     fn info(&self) -> Option<TunnelInfo> {
         self.info.clone()
+    }
+}
+
+pub mod tests {
+    use super::NetNS;
+    use crate::{packet_def::ZCPacket, TunnelConnector, TunnelListener};
+    use bytes::Bytes;
+    use futures::{SinkExt, StreamExt};
+
+    pub(crate) async fn _tunnel_pingpong<L, C>(listener: L, connector: C)
+    where
+        L: TunnelListener + Send + Sync + 'static,
+        C: TunnelConnector + Send + Sync + 'static,
+    {
+        _tunnel_pingpong_netns(
+            listener,
+            connector,
+            NetNS::new(None),
+            NetNS::new(None),
+            "12345678abcdefg".as_bytes().to_vec(),
+        )
+        .await;
+    }
+
+    pub async fn _tunnel_echo_server(tunnel: Box<dyn super::Tunnel>, once: bool) {
+        let (mut recv, mut send) = tunnel.split();
+
+        if !once {
+            while let Some(item) = recv.next().await {
+                let Ok(msg) = item else {
+                    continue;
+                };
+                if let Err(_) = send.send(msg).await {
+                    break;
+                }
+            }
+        } else {
+            let Some(ret) = recv.next().await else {
+                assert!(false, "recv error");
+                return;
+            };
+
+            if ret.is_err() {
+                tracing::debug!(?ret, "recv error");
+                return;
+            }
+
+            let res = ret.unwrap();
+            tracing::debug!(?res, "recv a msg, try echo back");
+            send.send(res).await.unwrap();
+        }
+        let _ = send.flush().await;
+        let _ = send.close().await;
+
+        tracing::warn!("echo server exit...");
+    }
+
+    pub(crate) async fn _tunnel_pingpong_netns<L, C>(
+        mut listener: L,
+        mut connector: C,
+        l_netns: NetNS,
+        c_netns: NetNS,
+        buf: Vec<u8>,
+    ) where
+        L: TunnelListener + Send + Sync + 'static,
+        C: TunnelConnector + Send + Sync + 'static,
+    {
+        l_netns
+            .run_async(|| async {
+                listener.listen().await.unwrap();
+            })
+            .await;
+
+        let lis = tokio::spawn(async move {
+            let ret = listener.accept().await.unwrap();
+            println!("accept: {:?}", ret.info());
+            assert_eq!(
+                url::Url::from(ret.info().unwrap().local_addr.unwrap()),
+                listener.local_url()
+            );
+            _tunnel_echo_server(ret, false).await
+        });
+
+        let tunnel = c_netns.run_async(|| connector.connect()).await.unwrap();
+        println!("connect: {:?}", tunnel.info());
+
+        assert_eq!(
+            url::Url::from(tunnel.info().unwrap().remote_addr.unwrap()),
+            connector.remote_url(),
+        );
+
+        let (mut recv, mut send) = tunnel.split();
+
+        send.send(ZCPacket::new_with_payload(buf.as_slice()))
+            .await
+            .unwrap();
+
+        let ret = tokio::time::timeout(tokio::time::Duration::from_secs(1), recv.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        println!("echo back: {:?}", ret);
+        assert_eq!(ret.payload(), Bytes::from(buf));
+
+        send.close().await.unwrap();
+
+        if ["udp", "wg"].contains(&connector.remote_url().scheme()) {
+            lis.abort();
+        } else {
+            // lis should finish in 1 second
+            let ret = tokio::time::timeout(tokio::time::Duration::from_secs(1), lis).await;
+            assert!(ret.is_ok());
+        }
     }
 }
