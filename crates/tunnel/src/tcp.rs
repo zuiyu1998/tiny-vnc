@@ -472,4 +472,14 @@ mod tests {
         let connector = TcpTunnelConnector::new("tcp://127.0.0.1:31011".parse().unwrap());
         _tunnel_pingpong(listener, connector).await
     }
+
+    #[tokio::test]
+    async fn tcp_bench() {
+        use super::*;
+        use crate::common::tests::_tunnel_bench;
+
+        let listener = TcpTunnelListener::new("tcp://0.0.0.0:31012".parse().unwrap());
+        let connector = TcpTunnelConnector::new("tcp://127.0.0.1:31012".parse().unwrap());
+        _tunnel_bench(listener, connector).await
+    }
 }

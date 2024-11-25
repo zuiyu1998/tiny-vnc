@@ -270,8 +270,67 @@ where
 pub mod tests {
     use super::NetNS;
     use crate::{packet_def::ZCPacket, TunnelConnector, TunnelListener};
-    use bytes::Bytes;
-    use futures::{SinkExt, StreamExt};
+    use bytes::{BufMut, Bytes, BytesMut};
+    use futures::{SinkExt, StreamExt, TryStreamExt};
+    use std::time::Instant;
+
+    pub(crate) async fn _tunnel_bench<L, C>(mut listener: L, mut connector: C)
+    where
+        L: TunnelListener + Send + Sync + 'static,
+        C: TunnelConnector + Send + Sync + 'static,
+    {
+        listener.listen().await.unwrap();
+
+        let lis = tokio::spawn(async move {
+            let ret = listener.accept().await.unwrap();
+            _tunnel_echo_server(ret, false).await
+        });
+
+        let tunnel = connector.connect().await.unwrap();
+
+        let (recv, mut send) = tunnel.split();
+
+        // prepare a 4k buffer with random data
+        let mut send_buf = BytesMut::new();
+        for _ in 0..64 {
+            send_buf.put_i128(rand::random::<i128>());
+        }
+
+        let r = tokio::spawn(async move {
+            let now = Instant::now();
+            let count = recv
+                .try_fold(0usize, |mut ret, _| async move {
+                    ret += 1;
+                    Ok(ret)
+                })
+                .await
+                .unwrap();
+
+            println!(
+                "bps: {}",
+                (count / 1024) * 4 / now.elapsed().as_secs() as usize
+            );
+        });
+
+        let now = Instant::now();
+        while now.elapsed().as_secs() < 10 {
+            // send.feed(item)
+            let item = ZCPacket::new_with_payload(send_buf.as_ref());
+            let _ = send.feed(item).await.unwrap();
+        }
+
+        send.close().await.unwrap();
+        drop(send);
+        drop(connector);
+        drop(tunnel);
+
+        tracing::warn!("wait for recv to finish...");
+
+        let _ = tokio::join!(r);
+
+        lis.abort();
+        let _ = tokio::join!(lis);
+    }
 
     pub(crate) async fn _tunnel_pingpong<L, C>(listener: L, connector: C)
     where
