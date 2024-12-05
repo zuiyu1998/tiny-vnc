@@ -1,5 +1,5 @@
 [workspace]
-members = ["./crates/tunnel", "."]
+members = ["./crates/tunnel", ".", "tiny-desk", "crates/abi"]
 resolver = "2"
 
 [workspace.dependencies]

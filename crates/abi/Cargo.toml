@@ -1,0 +1,8 @@
+[package]
+name = "abi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tunnel = { path = "../tunnel" }
+thiserror = { workspace = true }

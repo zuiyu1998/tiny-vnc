@@ -3,6 +3,14 @@
 version = 3
 
 [[package]]
+name = "abi"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tunnel",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -655,6 +663,10 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "tiny-desk"
+version = "0.1.0"
 
 [[package]]
 name = "tinystr"
