@@ -92,6 +92,17 @@ pub struct RingTunnelListener {
     conn_receiver: UnboundedReceiver<Arc<Connection>>,
 }
 
+impl RingTunnelListener {
+    pub fn new(key: url::Url) -> Self {
+        let (conn_sender, conn_receiver) = tokio::sync::mpsc::unbounded_channel();
+        RingTunnelListener {
+            listerner_addr: key,
+            conn_sender,
+            conn_receiver,
+        }
+    }
+}
+
 fn get_tunnel_for_client(conn: Arc<Connection>) -> impl Tunnel {
     TunnelWrapper::new(
         RingStream::new(conn.client.clone()),
@@ -288,5 +299,60 @@ impl Debug for RingStream {
             .field("len", &self.ring_cons_impl.base().occupied_len())
             .field("cap", &self.ring_cons_impl.base().capacity())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+    use tokio::time::timeout;
+
+    use crate::common::tests::{_tunnel_bench, _tunnel_pingpong};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn ring_pingpong() {
+        let id: url::Url = format!("ring://{}", Uuid::new_v4()).parse().unwrap();
+        let listener = RingTunnelListener::new(id.clone());
+        let connector = RingTunnelConnector::new(id.clone());
+        _tunnel_pingpong(listener, connector).await
+    }
+
+    #[tokio::test]
+    async fn ring_bench() {
+        let id: url::Url = format!("ring://{}", Uuid::new_v4()).parse().unwrap();
+        let listener = RingTunnelListener::new(id.clone());
+        let connector = RingTunnelConnector::new(id);
+        _tunnel_bench(listener, connector).await
+    }
+
+    #[tokio::test]
+    async fn ring_close() {
+        let (stunnel, ctunnel) = create_ring_tunnel_pair();
+        drop(stunnel);
+
+        let mut stream = ctunnel.split().0;
+        let ret = stream.next().await;
+        assert!(ret.as_ref().is_none(), "expect none, got {:?}", ret);
+    }
+
+    #[tokio::test]
+    async fn abort_ring_stream() {
+        let (_stunnel, ctunnel) = create_ring_tunnel_pair();
+        let mut stream = ctunnel.split().0;
+        let task = tokio::spawn(async move {
+            let _ = stream.next().await;
+        });
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        task.abort();
+        let _ = tokio::join!(task);
+    }
+
+    #[tokio::test]
+    async fn ring_stream_recv_timeout() {
+        let (_stunnel, ctunnel) = create_ring_tunnel_pair();
+        let mut stream = ctunnel.split().0;
+        let _ = timeout(tokio::time::Duration::from_millis(10), stream.next()).await;
     }
 }
