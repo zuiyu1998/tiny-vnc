@@ -5,6 +5,7 @@ pub mod common;
 pub mod packet_def;
 pub mod platform;
 pub mod tcp;
+pub mod ring;
 
 use async_trait::async_trait;
 use futures::{Sink, Stream};
@@ -15,6 +16,7 @@ use url::Url;
 
 pub type StreamItem = Result<ZCPacket, Error>;
 pub type SinkItem = ZCPacket;
+pub type SinkError = Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -28,6 +30,10 @@ pub enum Error {
     NoDnsRecordFound(IpVersion),
     #[error("shutdown")]
     Shutdown,
+    #[error("invalid addr: {0}")]
+    InvalidAddr(String),
+    #[error("internal error {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

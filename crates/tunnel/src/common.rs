@@ -165,6 +165,14 @@ pub(crate) trait FromUrl {
         Self: Sized;
 }
 
+impl FromUrl for uuid::Uuid {
+    fn from_url(url: url::Url, _ip_version: IpVersion) -> Result<Self, Error> {
+        let o = url.host_str().unwrap();
+        let o = uuid::Uuid::parse_str(o).map_err(|e| Error::InvalidAddr(e.to_string()))?;
+        Ok(o)
+    }
+}
+
 impl FromUrl for SocketAddr {
     fn from_url(url: url::Url, ip_version: IpVersion) -> Result<Self, Error> {
         let addrs = url.socket_addrs(|| None)?;

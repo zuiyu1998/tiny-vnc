@@ -18,6 +18,10 @@ pin-project-lite = { workspace = true }
 zerocopy = { workspace = true, features = ["derive", "simd"] }
 tokio-util = { workspace = true, features = ["io"] }
 bitflags = { workspace = true }
+async-ringbuf = { workspace = true }
+crossbeam = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+parking_lot = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
