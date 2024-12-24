@@ -747,7 +747,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiny-desk"
+name = "tiny-vnc"
 version = "0.1.0"
 
 [[package]]

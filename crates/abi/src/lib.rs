@@ -2,9 +2,9 @@ mod error;
 
 use error::Result;
 
-pub struct VPNInstace {}
+pub struct VPNInstance {}
 
-impl VPNInstace {
+impl VPNInstance {
     pub async fn run() -> Result<()> {
         Ok(())
     }
